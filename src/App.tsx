@@ -6,7 +6,7 @@ import {
   Wind, Flame, Droplets, Mountain, Activity,
   Star, Archive, Printer, Lightbulb, BookOpen,
   ArrowLeftRight, Type as TypeIcon, BarChart2, Eraser,
-  Lock, Scroll
+  Lock, Scroll, History, Save, Upload, FileJson, GitBranch, Tag
 } from 'lucide-react';
 import { GoogleGenAI, Type } from '@google/genai';
 import { toPng } from 'html-to-image';
@@ -14,6 +14,7 @@ import JSZip from 'jszip';
 import ReactMarkdown from 'react-markdown';
 import { methodsData } from './data';
 import { CreditsModal } from './components/CreditsModal';
+import { HistoryItem, AnalysisSegment, EssenceCardData } from './types';
 
 import { GematriaTool } from './tools/GematriaTool';
 import { AtbashTool } from './tools/AtbashTool';
@@ -219,6 +220,15 @@ const EssenceCard: React.FC<{ card: any }> = ({ card }) => {
         <div className="flex justify-between items-start mb-4">
           <div>
             <h3 className={`text-xl font-black ${theme.text} leading-tight mb-0.5`}>{card.title}</h3>
+            {card.tags && (
+              <div className="flex flex-wrap gap-1 mb-1">
+                {card.tags.map((tag: string, i: number) => (
+                  <span key={i} className="text-[8px] px-1.5 py-0.5 bg-black/5 rounded-full text-slate-500 font-medium">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-center gap-1.5">
               <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 px-1.5 py-0.5 bg-slate-100 rounded">{card.energy}</span>
               <div className="flex gap-0.5">
@@ -258,7 +268,12 @@ const EssenceCard: React.FC<{ card: any }> = ({ card }) => {
 
 // --- ENHANCED RESULT CARD ---
 
-const ResultCard: React.FC<{ segment: any }> = ({ segment }) => {
+const ResultCard: React.FC<{ 
+  segment: any; 
+  isSelected?: boolean; 
+  onSelect?: () => void;
+  isSelectable?: boolean;
+}> = ({ segment, isSelected, onSelect, isSelectable }) => {
   const [copied, setCopied] = useState(false);
   let colorKey = segment.level === 1 ? 'blue' : segment.level === 2 ? 'green' : segment.level === 3 ? 'purple' : segment.level === 4 ? 'cyan' : 'gold';
   const styles = getColorClasses(colorKey);
@@ -268,6 +283,7 @@ const ResultCard: React.FC<{ segment: any }> = ({ segment }) => {
       relative group overflow-hidden rounded-2xl border-t border-l border-white/10 border-b border-r border-black/20 ${styles.bg} ${styles.glow}
       backdrop-blur-xl transition-all duration-700 mb-10 print:border-none print:bg-white print:shadow-none
       animate-in fade-in slide-in-from-bottom-4
+      ${isSelected ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-black' : ''}
     `}>
       {/* Dynamic Animated Border Glow */}
       <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-1000 pointer-events-none`}>
@@ -276,11 +292,26 @@ const ResultCard: React.FC<{ segment: any }> = ({ segment }) => {
 
       <div className="p-6 md:p-8 flex items-center justify-between border-b border-white/10 relative z-10">
         <div className="flex items-center gap-5">
+          {isSelectable && (
+            <button
+              onClick={onSelect}
+              className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${isSelected ? 'bg-purple-500 border-purple-500 text-white' : 'border-white/20 hover:border-white/40'}`}
+            >
+              {isSelected && <Check size={14} />}
+            </button>
+          )}
           <div className={`w-14 h-14 rounded-2xl bg-black/40 flex items-center justify-center border ${styles.border} ${styles.text}`}>
             {segment.level === 99 ? <Star className="animate-spin-slow" /> : <Hexagon strokeWidth={1.5} />}
           </div>
           <div>
-            <h3 className={`text-2xl font-black tracking-tight ${styles.text} print:text-black`}>{segment.title}</h3>
+            <div className="flex items-center gap-3">
+              <h3 className={`text-2xl font-black tracking-tight ${styles.text} print:text-black`}>{segment.title}</h3>
+              {segment.tags && segment.tags.map((tag: string, i: number) => (
+                <span key={i} className="px-2 py-0.5 bg-white/5 border border-white/10 rounded-full text-[10px] text-slate-400 flex items-center gap-1">
+                  <Tag size={10} /> {tag}
+                </span>
+              ))}
+            </div>
             <div className="flex items-center gap-2 mt-1">
                <span className="text-[10px] uppercase font-mono tracking-[0.2em] text-slate-500">
                 {segment.level === 99 ? 'INTEGRATION ARCHITECTURE' : `PHASE 0${segment.level}`}
@@ -324,6 +355,68 @@ export default function App() {
   const [isGuidesMenuOpen, setIsGuidesMenuOpen] = useState(false);
   const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  
+  // History & Branching State
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+  const [selectedSegments, setSelectedSegments] = useState<AnalysisSegment[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  // Load history from local storage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('70panim_history');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setHistory(parsed);
+      } catch (e) {
+        console.error("Failed to load history", e);
+      }
+    }
+  }, []);
+
+  // Save history to local storage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('70panim_history', JSON.stringify(history));
+  }, [history]);
+
+  const handleExportHistory = () => {
+    const blob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `70panim_history_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportHistory = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (Array.isArray(parsed)) {
+          setHistory(prev => [...prev, ...parsed]); // Merge or replace? Let's merge for now
+          alert('היסטוריה נטענה בהצלחה');
+        }
+      } catch (err) {
+        alert('שגיאה בטעינת הקובץ');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSelectSegment = (segment: AnalysisSegment) => {
+    setSelectedSegments(prev => {
+      const exists = prev.some(s => s.title === segment.title && s.content === segment.content);
+      if (exists) return prev.filter(s => s.title !== segment.title || s.content !== segment.content);
+      return [...prev, segment];
+    });
+  };
 
   const handleDownloadZip = async () => {
     setIsZipping(true);
@@ -388,13 +481,32 @@ export default function App() {
   const handleAnalyze = async () => {
     if (!inputText || selectedMethods.length === 0) return;
     setLoading(true);
-    setAnalysisData(null);
-    setCardsData(null);
+    
+    // Don't clear immediately, we want to show loading state while keeping old data if needed
+    // setAnalysisData(null); 
+    // setCardsData(null);
     
     const activeMethods: any[] = [];
     methodsData.forEach(l => l.methods.forEach(m => selectedMethods.includes(m.id) && activeMethods.push({ ...m, level: l.level, details: m.description || m.name })));
 
-    const systemInstruction = `Analyze the user input using the following selected methods:\n${activeMethods.map(m => `- ${m.name}: ${m.details}`).join('\n')}\n\nReturn JSON with "analysis" (array of {title, level, content}) and "cards" (exactly 9 {title, element, energy, score, sentences:[4]}) keys. Use Nikud in cards sentences. Format content with markdown.`;
+    let promptContext = "";
+    if (selectedSegments.length > 0) {
+      promptContext = `
+      CONTEXT FROM PREVIOUS ANALYSIS:
+      The user is continuing a conversation based on the following segments:
+      ${selectedSegments.map(s => `[Title: ${s.title}]\n${s.content}`).join('\n---\n')}
+      
+      Please answer the new query: "${inputText}" taking into account the context above.
+      `;
+    }
+
+    const systemInstruction = `Analyze the user input using the following selected methods:\n${activeMethods.map(m => `- ${m.name}: ${m.details}`).join('\n')}\n
+    ${promptContext ? promptContext : ""}
+    
+    Return JSON with "analysis" (array of {title, level, content, tags: string[]}) and "cards" (exactly 9 {title, element, energy, score, sentences:[4], tags: string[]}) keys. 
+    Use Nikud in cards sentences. Format content with markdown.
+    "tags" should be a short list of keywords (1-3) related to the specific content of the segment/card.
+    `;
     
     try {
       const response = await ai.models.generateContent({
@@ -413,7 +525,8 @@ export default function App() {
                   properties: {
                     title: { type: Type.STRING },
                     level: { type: Type.NUMBER },
-                    content: { type: Type.STRING }
+                    content: { type: Type.STRING },
+                    tags: { type: Type.ARRAY, items: { type: Type.STRING } }
                   },
                   required: ["title", "level", "content"]
                 }
@@ -430,7 +543,8 @@ export default function App() {
                     sentences: {
                       type: Type.ARRAY,
                       items: { type: Type.STRING }
-                    }
+                    },
+                    tags: { type: Type.ARRAY, items: { type: Type.STRING } }
                   },
                   required: ["title", "element", "energy", "score", "sentences"]
                 }
@@ -442,8 +556,28 @@ export default function App() {
       });
       
       const parsed = JSON.parse(response.text || "{}");
-      setAnalysisData(parsed.analysis || []);
-      setCardsData(parsed.cards || []);
+      const newAnalysis = parsed.analysis || [];
+      const newCards = parsed.cards || [];
+
+      setAnalysisData(newAnalysis);
+      setCardsData(newCards);
+
+      // Save to history
+      const newItem: HistoryItem = {
+        id: Date.now().toString(),
+        parentId: currentHistoryId, // If we are viewing a history item, this is the parent
+        timestamp: Date.now(),
+        query: inputText,
+        selectedMethods,
+        analysis: newAnalysis,
+        cards: newCards,
+        contextSegments: selectedSegments
+      };
+
+      setHistory(prev => [newItem, ...prev]);
+      setCurrentHistoryId(newItem.id);
+      setSelectedSegments([]); // Clear selection after use
+
     } catch (e) {
       console.error(e);
       setAnalysisData([{ title: "שגיאה", level: 1, content: "אירעה שגיאה בעיבוד הנתונים." }]);
@@ -451,11 +585,113 @@ export default function App() {
     setLoading(false);
   };
 
+  // Load history item
+  const loadHistoryItem = (id: string) => {
+    const item = history.find(h => h.id === id);
+    if (item) {
+      setAnalysisData(item.analysis);
+      setCardsData(item.cards);
+      setInputText(item.query);
+      setSelectedMethods(item.selectedMethods);
+      setCurrentHistoryId(item.id);
+      setIsHistoryOpen(false);
+    }
+  };
+
+
   return (
     <div className="min-h-screen bg-[#020208] text-slate-200 font-sans flex flex-col dir-rtl relative" dir="rtl">
       {/* Global Noise Texture */}
       <div className="pointer-events-none fixed inset-0 z-0 opacity-[0.03] mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
       
+      {/* History Sidebar */}
+      <div className={`fixed inset-y-0 right-0 w-80 bg-slate-900/95 backdrop-blur-2xl border-l border-white/10 z-[80] transform transition-transform duration-300 ${isHistoryOpen ? 'translate-x-0' : 'translate-x-full'} flex flex-col`}>
+        <div className="p-4 border-b border-white/10 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <History size={18} className="text-amber-400" />
+            היסטוריה
+          </h2>
+          <button onClick={() => setIsHistoryOpen(false)} className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+        
+        <div className="p-4 flex gap-2 border-b border-white/10">
+          <button onClick={handleExportHistory} className="flex-1 flex items-center justify-center gap-2 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-slate-300 transition-colors" title="ייצוא לקובץ">
+            <Save size={14} /> ייצוא
+          </button>
+          <label className="flex-1 flex items-center justify-center gap-2 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-slate-300 transition-colors cursor-pointer" title="ייבוא מקובץ">
+            <Upload size={14} /> ייבוא
+            <input type="file" onChange={handleImportHistory} accept=".json" className="hidden" />
+          </label>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+          {history.length === 0 ? (
+            <div className="text-center text-slate-500 py-10 text-sm">
+              אין היסטוריה שמורה
+            </div>
+          ) : (
+            history.map(item => (
+              <div 
+                key={item.id} 
+                onClick={() => loadHistoryItem(item.id)}
+                className={`p-3 rounded-xl border cursor-pointer transition-all ${currentHistoryId === item.id ? 'bg-purple-500/20 border-purple-500/50' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-slate-500">{new Date(item.timestamp).toLocaleDateString()} {new Date(item.timestamp).toLocaleTimeString().slice(0,5)}</span>
+                  {item.parentId && <GitBranch size={12} className="text-purple-400" />}
+                </div>
+                <p className="text-sm text-slate-200 line-clamp-2 font-medium">{item.query}</p>
+                <div className="mt-2 flex gap-1 flex-wrap">
+                  {item.selectedMethods.slice(0, 3).map(m => (
+                    <span key={m} className="px-1.5 py-0.5 bg-black/30 rounded text-[9px] text-slate-400">{methodsData.flatMap(l=>l.methods).find(x=>x.id===m)?.name}</span>
+                  ))}
+                  {item.selectedMethods.length > 3 && <span className="px-1.5 py-0.5 bg-black/30 rounded text-[9px] text-slate-400">+{item.selectedMethods.length - 3}</span>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Continue Bar */}
+      {selectedSegments.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-slate-900/90 backdrop-blur-xl border-t border-white/10 z-40 flex items-center justify-between animate-in slide-in-from-bottom-full">
+          <div className="flex items-center gap-4">
+            <div className="flex -space-x-2 space-x-reverse">
+              {selectedSegments.map((s, i) => (
+                <div key={i} className="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/50 flex items-center justify-center text-[10px] font-bold text-purple-300">
+                  {i + 1}
+                </div>
+              ))}
+            </div>
+            <div className="text-sm text-slate-300">
+              <span className="font-bold text-white">{selectedSegments.length}</span> מקטעים נבחרו להמשך שיחה
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setSelectedSegments([])}
+              className="px-4 py-2 rounded-lg hover:bg-white/10 text-slate-400 text-sm transition-colors"
+            >
+              ביטול
+            </button>
+            <button 
+              onClick={() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                // Focus input?
+                const input = document.querySelector('textarea') as HTMLTextAreaElement;
+                if (input) input.focus();
+              }}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-bold shadow-lg shadow-purple-500/20 transition-all"
+            >
+              המשך שיחה עם המקטעים שנבחרו
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Glass Header */}
       <header className="sticky top-0 z-50 h-20 border-b border-white/5 bg-black/40 backdrop-blur-2xl flex items-center justify-between px-6 print:hidden">
         <div className="flex items-center gap-4">
@@ -471,6 +707,15 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* History Toggle */}
+          <button
+            onClick={() => setIsHistoryOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all text-xs"
+          >
+            <History size={14} className="text-amber-400" />
+            היסטוריה
+          </button>
+
           {/* Tools Menu */}
           <div className="relative">
             <button
@@ -823,7 +1068,15 @@ export default function App() {
                     <p className="text-gray-500 mt-2">v{VERSION} • ארגז הכלים לניתוח טקסטים בגישה יהודית</p>
                   </div>
 
-                  {analysisData.map((seg, i) => <ResultCard key={i} segment={seg} />)}
+                  {analysisData.map((seg, i) => (
+                    <ResultCard 
+                      key={i} 
+                      segment={seg} 
+                      isSelectable={true}
+                      isSelected={selectedSegments.some(s => s.title === seg.title && s.content === seg.content)}
+                      onSelect={() => handleSelectSegment(seg)}
+                    />
+                  ))}
 
                   {/* Essence Cards Grid */}
                   {cardsData && (
